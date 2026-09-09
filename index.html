@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>First-Person Monster Battle</title>
+    <style>
+        * { box-sizing: border-box; touch-action: manipulation; user-select: none; }
+        body { margin: 0; padding: 0; background-color: #121212; color: #fff; font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+        #game-container { position: relative; width: 100vw; max-width: 400px; height: 100vh; max-height: 700px; background-color: #141414; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+        canvas { width: 100%; height: 75%; background-color: #1a1a1a; display: block; }
+        
+        /* 手机端触屏按键区域 */
+        #controls { width: 100%; height: 25%; background-color: #222; display: flex; justify-content: space-around; align-items: center; padding: 10px; border-top: 2px solid #333; }
+        .btn { width: 42%; height: 80%; border-radius: 16px; border: none; color: white; font-size: 18px; font-weight: bold; display: flex; flex-direction: column; justify-content: center; align-items: center; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); active { transform: scale(0.95); } }
+        #shield-btn { background: linear-gradient(135deg, #0284c7, #06b6d4); }
+        #sword-btn { background: linear-gradient(135deg, #eab308, #ca8a04); }
+        .btn:active { opacity: 0.8; }
+        .sub-text { font-size: 12px; font-weight: normal; margin-top: 4px; opacity: 0.8; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="360" height="480"></canvas>
+    
+    <!-- 触屏虚拟按键 -->
+    <div id="controls">
+        <button id="shield-btn" class="btn">
+            🛡️ SHIELD
+            <span class="sub-text">按住格挡</span>
+        </button>
+        <button id="sword-btn" class="btn">
+            ⚔️ SWORD
+            <span class="sub-text" id="cd-text">点击攻击 (3/3)</span>
+        </button>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// 游戏数据
+let score = 500;
+let playerHp = 100, playerMaxHp = 100;
+let monsterHp = 100, monsterMaxHp = 100;
+
+let attackCount = 0;
+let isRecharging = false;
+let rechargeStartTime = 0;
+
+let damageText = "";
+let damageTextColor = "#eab308";
+let damageTimer = 0;
+
+let monsterHitFlash = 0;
+let swordOffset = 0;
+let shieldOffset = 0;
+let isBlocking = false;
+
+let monsterNextAttackInterval = Math.floor(Math.random() * 2000) + 1000;
+let monsterLastAttackTime = Date.now();
+let isMonsterAttackingFace = false;
+let attackFaceTimer = 0;
+
+let gameState = "PLAYING";
+
+// 触屏事件绑定
+const shieldBtn = document.getElementById('shield-btn');
+const swordBtn = document.getElementById('sword-btn');
+const cdText = document.getElementById('cd-text');
+
+// 举盾（按住/松开）
+shieldBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startBlock(); });
+shieldBtn.addEventListener('touchend', (e) => { e.preventDefault(); endBlock(); });
+shieldBtn.addEventListener('mousedown', startBlock);
+shieldBtn.addEventListener('mouseup', endBlock);
+
+function startBlock() { if(gameState==="PLAYING") { isBlocking = true; shieldOffset = 20; } }
+function endBlock() { isBlocking = false; }
+
+// 挥剑（点击）
+swordBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if(gameState === "PLAYING" && !isRecharging) {
+        swordOffset = 25;
+        attackCount++;
+        
+        let dmg = Math.floor(Math.random() * 11) + 10; // 10-20
+        monsterHp -= dmg;
+        monsterHitFlash = 5;
+
+        if (dmg >= 18) { damageText = `CRITICAL! -${dmg}`; damageTextColor = "#ef4444"; }
+        else { damageText = `NORMAL -${dmg}`; damageTextColor = "#eab308"; }
+        damageTimer = 20;
+
+        if(attackCount >= 3) {
+            isRecharging = true;
+            rechargeStartTime = Date.now();
+        }
+
+        if(monsterHp <= 0) {
+            monsterHp = 100;
+            score += 100;
+            damageText = "VICTORY! +100 PTS";
+            damageTextColor = "#22c55e";
+            damageTimer = 30;
+        }
+    } else if(gameState !== "PLAYING") {
+        // 重置游戏
+        playerHp = 100; monsterHp = 100; gameState = "PLAYING";
+        monsterLastAttackTime = Date.now();
+    }
+});
+
+// 绘制怪兽 👿 / 😈
+function drawMonster(x, y, isEvolved, isHit, isAttackingFace) {
+    let bodyColor = isHit > 0 ? "#ef4444" : (isEvolved ? "#22c55e" : "#a855f7");
+    let hornColor = isEvolved ? "#15803d" : "#6b21a8";
+
+    // 犄角
+    ctx.fillStyle = hornColor;
+    ctx.beginPath(); ctx.moveTo(x - 45, y - 20); ctx.lineTo(x - 65, y - 70); ctx.lineTo(x - 25, y - 45); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x + 45, y - 20); ctx.lineTo(x + 65, y - 70); ctx.lineTo(x + 25, y - 45); ctx.fill();
+
+    // 头部
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath(); ctx.arc(x, y, 55, 0, Math.PI * 2); ctx.fill();
+
+    // 眼睛
+    ctx.fillStyle = "#ef4444";
+    ctx.beginPath(); ctx.moveTo(x - 30, y - 20); ctx.lineTo(x - 10, y - 5); ctx.lineTo(x - 30, y); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x + 30, y - 20); ctx.lineTo(x + 10, y - 5); ctx.lineTo(x + 30, y); ctx.fill();
+
+    // 嘴巴 (😈 露出尖牙)
+    if(isAttackingFace) {
+        ctx.fillStyle = "#000";
+        ctx.beginPath(); ctx.ellipse(x, y + 15, 20, 12, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#fff";
+        // 尖牙
+        ctx.beginPath(); ctx.moveTo(x - 12, y + 5); ctx.lineTo(x - 6, y + 5); ctx.lineTo(x - 9, y + 18); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x + 6, y + 5); ctx.lineTo(x + 12, y + 5); ctx.lineTo(x + 9, y + 18); ctx.fill();
+    } else {
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(x, y + 5, 25, 0.2, Math.PI - 0.2); ctx.stroke();
+    }
+
+    // 血条
+    ctx.fillStyle = "#444"; ctx.fillRect(x - 50, y - 85, 100, 8);
+    ctx.fillStyle = "#22c55e"; ctx.fillRect(x - 50, y - 85, Math.max(0, (monsterHp / monsterMaxHp) * 100), 8);
+}
+
+// 主渲染循环
+function gameLoop() {
+    let now = Date.now();
+    let isEvolved = score >= 2000;
+
+    // CD 逻辑
+    if(isRecharging) {
+        if(now - rechargeStartTime >= 2000) { isRecharging = false; attackCount = 0; }
+        cdText.innerText = "CD 冷却中...";
+    } else {
+        cdText.innerText = `点击攻击 (${3 - attackCount}/3)`;
+    }
+
+    // 怪兽攻击逻辑
+    if(gameState === "PLAYING") {
+        if(now - monsterLastAttackTime >= monsterNextAttackInterval) {
+            monsterLastAttackTime = now;
+            monsterNextAttackInterval = isEvolved ? Math.floor(Math.random() * 1000) + 800 : Math.floor(Math.random() * 2000) + 1000;
+            isMonsterAttackingFace = true;
+            attackFaceTimer = now;
+
+            if(isBlocking) {
+                damageText = "BLOCKED!"; damageTextColor = "#06b6d4"; damageTimer = 20;
+            } else {
+                let atkDmg = isEvolved ? 15 : 10;
+                playerHp -= atkDmg;
+                damageText = `MONSTER HIT! -${atkDmg}`; damageTextColor = "#ef4444"; damageTimer = 20;
+                if(playerHp <= 0) { playerHp = 0; score -= 100; gameState = "GAME_OVER"; }
+            }
+        }
+        if(isMonsterAttackingFace && (now - attackFaceTimer >= 500)) { isMonsterAttackingFace = false; }
+    }
+
+    // 绘制
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 顶部 UI
+    ctx.fillStyle = "#eab308"; ctx.font = "bold 16px Arial"; ctx.fillText(`SCORE: ${score}`, 15, 25);
+    ctx.fillStyle = playerHp > 30 ? "#22c55e" : "#ef4444"; ctx.fillText(`HP: ${playerHp}/${playerMaxHp}`, 250, 25);
+    if(isEvolved) { ctx.fillStyle = "#22c55e"; ctx.font = "12px Arial"; ctx.fillText("[EVOLVED GREEN MONSTER]", 15, 45); }
+
+    // 绘制怪兽
+    drawMonster(180, 180, isEvolved, monsterHitFlash, isMonsterAttackingFace);
+    if(monsterHitFlash > 0) monsterHitFlash--;
+
+    // 飘字
+    if(damageTimer > 0) {
+        ctx.fillStyle = damageTextColor; ctx.font = "bold 18px Arial";
+        ctx.textAlign = "center"; ctx.fillText(damageText, 180, 280); ctx.textAlign = "left";
+        damageTimer--;
+    }
+
+    // 第一视角武装
+    let sY = 380 - shieldOffset;
+    ctx.fillStyle = isBlocking ? "#06b6d4" : "#444"; ctx.fillRect(30, sY, 60, 70);
+    ctx.strokeStyle = "#fff"; ctx.strokeRect(35, sY + 5, 50, 60);
+
+    let swY = 370 - swordOffset;
+    ctx.fillStyle = "#888"; ctx.fillRect(280, swY, 10, 80);
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.moveTo(275, swY); ctx.lineTo(295, swY); ctx.lineTo(285, swY - 20); ctx.fill();
+
+    if(shieldOffset > 0) shieldOffset -= 2;
+    if(swordOffset > 0) swordOffset -= 2;
+
+    // 结算
+    if(gameState === "GAME_OVER") {
+        ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#ef4444"; ctx.font = "bold 28px Arial"; ctx.textAlign = "center";
+        ctx.fillText("GAME OVER", 180, 220);
+        ctx.fillStyle = "#fff"; ctx.font = "16px Arial";
+        ctx.fillText("Score -100 | 点击右侧剑按钮重试", 180, 260);
+        ctx.textAlign = "left";
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>
